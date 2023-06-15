@@ -1,0 +1,126 @@
+import cv2
+from google.colab.patches import cv2_imshow
+import numpy as np
+import matplotlib.pyplot as plt
+import sklearn.metrics
+from skimage.segmentation import clear_border
+import sys
+import time
+
+from IPython.display import display, Javascript
+from google.colab.output import eval_js
+from base64 import b64decode
+
+def take_photo(filename='photo.jpg', quality=1.0):
+  js = Javascript('''
+    async function takePhoto(quality) {
+      const div = document.createElement('div');
+
+      const video = document.createElement('video');
+      video.style.display = 'block';
+      const stream = await navigator.mediaDevices.getUserMedia({video: true});
+
+      document.body.appendChild(div);
+      div.appendChild(video);
+      video.srcObject = stream;
+      await video.play();
+
+      // Resize the output to fit the video element.
+      google.colab.output.setIframeHeight(document.documentElement.scrollHeight, true);
+
+      // Wait for Capture to be clicked.
+      //await new Promise((resolve) => capture.onclick = resolve);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext('2d').drawImage(video, 0,0);
+      stream.getVideoTracks()[0].stop();
+      div.remove();
+      return canvas.toDataURL('image/jpeg', quality);
+    }
+    ''')
+  display(js)
+  data = eval_js('takePhoto({})'.format(quality))
+  binary = b64decode(data.split(',')[1])
+  with open(filename, 'wb') as f:
+    f.write(binary)
+  return filename
+  
+  from IPython.display import Image
+try:
+  filename = take_photo()
+  print('Saved to {}'.format(filename))
+
+  # Show the image which was just taken.
+  display(Image(filename))
+except Exception as err:
+  # Errors will be thrown if the user does not have a webcam or if they do not
+  # grant the page permission to access it.
+  print(str(err))
+  
+  raw_img = cv2.imread("photo.jpg")
+plt.imshow(cv2.cvtColor(raw_img, cv2.COLOR_BGR2RGB))
+
+plt.imshow(cv2.cvtColor(raw_img[1250:1600, 400:700], cv2.COLOR_BGR2RGB))
+
+egg = raw_img[1250:1600, 400:700]
+# egg = img[10700:11800, 3500:4500]
+egg_gray_raw = cv2.cvtColor(egg, cv2.COLOR_BGR2GRAY)
+# 51 seems a good value for blur
+egg_gray = cv2.medianBlur(egg_gray_raw,21)
+plt.imshow(np.hstack((egg_gray_raw, egg_gray)), cmap="gray")
+
+from google.colab import drive
+drive.mount('/content/drive')
+
+counts, vals = np.histogram(egg_gray, bins=range(2 ** 8))
+plt.plot(range(0, (2 ** 8) - 1), counts)
+plt.title("Grayscale image histogram")
+plt.xlabel("Pixel intensity")
+plt.ylabel("Count")
+
+thresh = 155
+mask = egg_gray > thresh
+plt.imshow(mask)
+
+height, width, _ = raw_img.shape
+split_height = 400
+split_width = 150
+
+def generate_mask(img, median_filter:int = 51, mask_thresh:int = 165):
+    """
+    Converts the image to b&w, run filter
+    Apply thresholding, see if we can extract feature.
+    """
+    filtered = cv2.medianBlur(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), median_filter)
+    return filtered > mask_thresh
+
+def slice_image(img: np.array, w: int, h: int, split_w: int, split_h: int):
+    """
+    Generator that returns the image slices
+    """
+    for y in range(0, h, split_h):
+        for x in range(0, w, split_w):
+            y1 = y + split_h
+            x1 = x + split_w
+            yield img[y:y1, x:x1]
+
+def display_all(all_image):
+    _, axs = plt.subplots(5,10,figsize=(15,15))
+    axs = axs.flatten()
+    for _msk, ax in zip(all_image, axs):
+        ax.imshow(_msk)
+    plt.show()
+
+raw_slices = slice_image(raw_img, width, height, split_width, split_height)
+mask = np.array([generate_mask(_img) for _img in raw_slices])
+mask.shape
+
+display_all(mask)
+plt.imshow(mask[21])
+
+mask = np.vectorize(clear_border, signature='(n,m)->(n,m)')(mask)
+
+display_all(mask)
+plt.imshow(mask[21])
